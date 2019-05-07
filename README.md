@@ -10,3 +10,7 @@ The polarity and subjectivity datasets by Pang/Lee were used to train the model
 ## Word2vec
 
 place the Google News word2vec binary file in /data/word2vec/ (change the file name in preprocessing files)
+
+## Pruning
+
+experimenting with pruning strategies to compress cnn size.
