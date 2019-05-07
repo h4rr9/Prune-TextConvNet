@@ -10,6 +10,9 @@ PATH_CHECKPOINTS = './checkpoints'
 PATH_GRAPHS = './graphs'
 # PATH_GRAPHS = '/scratch/scratch5/harig/tcNet_sub/graphs'
 
+PATH_BEST_WEIGHTS = './best_weights'
+# PATH_BEST_WEIGHTS = '../Trained Weights/tc-sub-data/checkpoints'
+
 config = tf.ConfigProto()
 config.intra_op_parallelism_threads = 4
 config.inter_op_parallelism_threads = 4
@@ -31,7 +34,8 @@ class TextConvNet:
         self.skip_step = 20
         self.training = False
         self.keep_prob_val = 0.5
-        self.keep_prob = tf.placeholder(name='keep_prob',shape=[], dtype=tf.float32)
+        self.keep_prob = tf.placeholder(
+            name='keep_prob', shape=[], dtype=tf.float32)
         self.best_acc = 0
 
     def import_data(self):
@@ -67,32 +71,6 @@ class TextConvNet:
                 embed_matrix, self.sentence, name='embed')
 
     def model(self):
-        # conv0 = layers.conv1d_relu(inputs=self.embed,
-        #                            filters=100,
-        #                            k_size=3,
-        #                            stride=1,
-        #                            padding='VALID',
-        #                            scope_name='conv0')
-        # pool0 = layers.maxpool1d(inputs=conv0, k_size=2,
-        #                          padding='VALID', scope_name='pool0')
-
-        # conv1 = layers.conv1d_relu(inputs=pool0,
-        #                            filters=100,
-        #                            k_size=3,
-        #                            stride=1,
-        #                            padding='VALID',
-        #                            scope_name='conv1')
-        # pool1 = layers.maxpool1d(inputs=conv1, k_size=2,
-        #                          padding='VALID', scope_name='pool1')
-
-        # conv2 = layers.conv1d_relu(inputs=pool1,
-        #                            filters=100,
-        #                            k_size=3,
-        #                            stride=1,
-        #                            padding='VALID',
-        #                            scope_name='conv2')
-        # pool2 = layers.maxpool1d(inputs=conv2, k_size=2,
-        #                          padding='VALID', scope_name='pool2')
 
         conv0 = layers.conv1d_relu(inputs=self.embed,
                                    filters=100,
@@ -249,7 +227,7 @@ class TextConvNet:
             print('\nSaving best accuracy: {0} from {1}\n'.format(
                 total_correct_preds / self.n_test, self.best_acc))
             self.best_acc = total_correct_preds / self.n_test
-            best_saver.save(sess, PATH_CHECKPOINTS + '/best_model', self.gstep)
+            best_saver.save(sess, PATH_BEST_WEIGHTS + '/model', self.gstep)
         else:
             print('\nBest Accuracy unchanged from : {0}\n'.format(
                 self.best_acc))
@@ -266,6 +244,7 @@ class TextConvNet:
     def train(self, n_epochs):
         utils.mkdir_safe(os.path.dirname(PATH_CHECKPOINTS))
         utils.mkdir_safe(PATH_CHECKPOINTS)
+        utils.mkdir_safe(PATH_BEST_WEIGHTS)
 
         train_writer = tf.summary.FileWriter(
             PATH_GRAPHS + '/train', tf.get_default_graph())
@@ -294,8 +273,88 @@ class TextConvNet:
         train_writer.close()
         val_writer.close()
 
+    def load_weights(self, sess, path):
+        loader = tf.train.Saver()
+        ckpt = tf.train.get_checkpoint_state(path)
+
+        loader.restore(sess, ckpt.model_checkpoint_path)
+
+    def pruner(self):
+
+        with tf.Session(config=config) as sess:
+
+            sess.run(tf.global_variables_initializer())
+            step = 0
+            print('untrained model')
+            # step = self.prune_train(sess, self.train_init, step)
+            self.prune_eval(sess, self.val_init)
+
+            print('loading weights')
+            self.load_weights(sess, PATH_BEST_WEIGHTS)
+
+            print('trained model')
+            # step = self.prune_train(sess, self.train_init, step)
+            self.prune_eval(sess, self.val_init)
+
+    def prune_train(self, sess, init, step):
+        start_time = time.time()
+        sess.run(init)
+        self.training = True
+        total_loss = 0
+        n_batches = 0
+        total_correct_preds = 0
+
+        try:
+            while True:
+                _, l, accuracy_batch = sess.run(
+                    [self.opt,
+                     self.loss,
+                     self.accuracy,
+                     ], feed_dict={self.keep_prob: self.keep_prob_val})
+
+                if (step + 1) % self.skip_step == 0:
+                    print('Loss at step {0}: {1}'.format(step, l))
+                step = step + 1
+                total_correct_preds = total_correct_preds + accuracy_batch
+                total_loss = total_loss + l
+                n_batches = n_batches + 1
+        except tf.errors.OutOfRangeError:
+            pass
+
+        print('\nAverage training loss : {0}'.format(
+            total_loss / n_batches))
+        print('Training accuracy : {0}'.format(
+            total_correct_preds / self.n_train))
+        print('Took: {0} seconds'.format(time.time() - start_time))
+
+        return step
+
+    def prune_eval(self, sess, init):
+        start_time = time.time()
+        sess.run(init)
+        self.training = False
+        total_correct_preds = 0
+        total_loss = 0
+        n_batches = 0
+        try:
+            while True:
+                l, accuracy_batch = sess.run(
+                    [self.loss, self.accuracy], feed_dict={self.keep_prob: 1.0})
+
+                total_correct_preds = total_correct_preds + accuracy_batch
+                total_loss = total_loss + l
+                n_batches = n_batches + 1
+        except tf.errors.OutOfRangeError:
+            pass
+
+        print('Average validation lossv: {0}'.format(total_loss / n_batches))
+        print('Validation accuracy : {0}'.format(
+            total_correct_preds / self.n_test))
+        print('Took: {0} seconds\n'.format(time.time() - start_time))
+
 
 if __name__ == '__main__':
     model = TextConvNet()
     model.build()
-    model.train(n_epochs=100)
+    # model.train(n_epochs=100)
+    model.pruner()
