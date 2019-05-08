@@ -3,7 +3,7 @@ checkpoints/
 graphs/
 __pycache__/
 best_weights/
-
+pruned_graph/
 # Compiled source #
 ###################
 *.bin
