@@ -44,7 +44,7 @@ class Pruner(T.TextConvNet):
 
             np_weights = self.load_np_weights(sess)
 
-            print('\nBefore pruning conv0 \n')
+            print('\nBefore pruning conv0\n')
 
             self.prune_eval(sess)
 
@@ -113,18 +113,30 @@ class Pruner(T.TextConvNet):
 
         return best_acc
 
-    def prune_layer(self, weights, layer):
+    def prune_final_layer(self, weights, layer):
 
         kernel_key, bias_key = self.get_weights_keys_layer(weights, layer)
-
         kernel, bias = weights[kernel_key], weights[bias_key]
-
         top_m = int(self.prune_keep * kernel.shape[-1])
-
         req_indices = self.l2_filter(kernel, top_m)
-
         weights[kernel_key] = kernel[:, :, req_indices]
         weights[bias_key] = bias[req_indices]
+
+        return weights
+
+    def prune_layer(self, weights, layer_i, layer_j):
+
+        kernel_key_i, bias_key_i = self.get_weights_keys_layer(
+            weights, layer_i)
+        kernel_i, bias_i = weights[kernel_key_i], weights[bias_key_i]
+        top_m = int(self.prune_keep * kernel_i.shape[-1])
+        req_indices = self.l2_filter(kernel_i, top_m)
+        weights[kernel_key_i] = kernel_i[:, :, req_indices]
+        weights[bias_key_i] = bias_i[req_indices]
+
+        kernel_key_j, _ = self.get_weights_keys_layer(weights, layer_j)
+        kernel_j = weights[kernel_key_j]
+        weights[kernel_key_j] = kernel_j[:, req_indices, :]
 
         return weights
 
@@ -132,9 +144,21 @@ class Pruner(T.TextConvNet):
 
         assert len(weight.shape) == 3, "not covolution kernel"
 
-        l2_norms = np.linalg.norm(weight, axis=(0, 1))
+        square_weight = np.square(np.abs(weight))
+        sum_weight = np.sum(square_weight, axis=(0, 1))
+        l2_norms = np.square(sum_weight)
 
         req_indices = np.argsort(l2_norms)[::-1][:top_m]
+
+        return req_indices
+
+    def l1_filter(self, weight, top_m):
+
+        assert len(weight.shape) == 3, "not covolution kernel"
+
+        abs_weights = np.abs(weight)
+        l1_norms = np.sum(abs_weights, axis=(0, 1))
+        req_indices = np.argsort(l1_norms)[::-1][:top_m]
 
         return req_indices
 
@@ -166,44 +190,47 @@ class Pruner(T.TextConvNet):
         conv2_weights = (weights[conv2_keys[0]], weights[conv2_keys[1]])
         fc0_weights = (weights[fc0_keys[0]], weights[fc0_keys[1]])
 
-        conv0 = layers.conv1d_relu(inputs=self.embed,
-                                   filters=100,
-                                   k_size=3,
-                                   stride=1,
-                                   padding='SAME',
-                                   scope_name='conv0',
-                                   _weights=conv0_weights)
-        pool0 = layers.one_maxpool(inputs=conv0,
-                                   padding='VALID', scope_name='pool0')
+        conv0 = layers.conv1d(inputs=self.embed,
+                              filters=100,
+                              k_size=3,
+                              stride=1,
+                              padding='SAME',
+                              scope_name='conv0',
+                              _weights=conv0_weights)
+        relu0 = layers.relu(inputs=conv0, scope_name='relu0')
+        pool0 = layers.one_maxpool(
+            inputs=relu0, padding='VALID', scope_name='pool0')
 
-        flatten0 = layers.flatten(pool0, scope_name='flatten0')
+        flatten0 = layers.flatten(inputs=pool0, scope_name='flatten0')
 
-        conv1 = layers.conv1d_relu(inputs=self.embed,
-                                   filters=100,
-                                   k_size=4,
-                                   stride=1,
-                                   padding='SAME',
-                                   scope_name='conv1',
-                                   _weights=conv1_weights)
-        pool1 = layers.one_maxpool(inputs=conv1,
-                                   padding='VALID', scope_name='pool1')
+        conv1 = layers.conv1d(inputs=self.embed,
+                              filters=100,
+                              k_size=4,
+                              stride=1,
+                              padding='SAME',
+                              scope_name='conv1',
+                              _weights=conv1_weights)
+        relu1 = layers.relu(inputs=conv1, scope_name='relu0')
+        pool1 = layers.one_maxpool(
+            inputs=relu1, padding='VALID', scope_name='pool1')
 
-        flatten1 = layers.flatten(pool1, scope_name='flatten1')
+        flatten1 = layers.flatten(inputs=pool1, scope_name='flatten1')
 
-        conv2 = layers.conv1d_relu(inputs=self.embed,
-                                   filters=100,
-                                   k_size=5,
-                                   stride=1,
-                                   padding='SAME',
-                                   scope_name='conv2',
-                                   _weights=conv2_weights)
-        pool2 = layers.one_maxpool(inputs=conv2,
-                                   padding='VALID', scope_name='pool2')
+        conv2 = layers.conv1d(inputs=self.embed,
+                              filters=100,
+                              k_size=5,
+                              stride=1,
+                              padding='SAME',
+                              scope_name='conv2',
+                              _weights=conv2_weights)
+        relu2 = layers.relu(inputs=conv2, scope_name='relu0')
+        pool2 = layers.one_maxpool(
+            inputs=relu2, padding='VALID', scope_name='pool2')
 
         flatten2 = layers.flatten(inputs=pool2, scope_name='flatten2')
 
         concat0 = layers.concatinate(
-            inputs=[flatten0, flatten1, flatten2], scope_name='concat0')
+            [flatten0, flatten1, flatten2], scope_name='concat0')
 
         dropout0 = layers.Dropout(
             inputs=concat0, rate=1 - self.keep_prob, scope_name='dropout0')
@@ -230,7 +257,7 @@ class Pruner(T.TextConvNet):
 
         self.destroy()
 
-        self.weights = self.prune_layer(self.weights, 'conv0')
+        self.weights = self.prune_final_layer(self.weights, 'conv0')
 
         self.build_from_weights(self.weights)
 
@@ -256,7 +283,7 @@ class Pruner(T.TextConvNet):
 
         self.destroy()
 
-        self.weights = self.prune_layer(self.weights, 'conv1')
+        self.weights = self.prune_final_layer(self.weights, 'conv1')
 
         self.build_from_weights(self.weights)
 
@@ -282,7 +309,7 @@ class Pruner(T.TextConvNet):
 
         self.destroy()
 
-        self.weights = self.prune_layer(self.weights, 'conv2')
+        self.weights = self.prune_final_layer(self.weights, 'conv2')
 
         self.build_from_weights(self.weights)
 

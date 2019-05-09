@@ -12,11 +12,22 @@ PATH_GRAPHS = './graphs'
 # PATH_GRAPHS = '/scratch/scratch5/harig/tcNet_sub/graphs'
 
 PATH_BEST_WEIGHTS = './best_weights'
-# PATH_BEST_WEIGHTS = '../Trained Weights/tc-sub-data/checkpoints'
+
+DATASET = 'pol'
 
 config = tf.ConfigProto()
 config.intra_op_parallelism_threads = 4
 config.inter_op_parallelism_threads = 4
+
+if DATASET == 'sub':
+    load_data = utils.load_subjectivity_data
+    load_embeddings = utils.load_embeddings_subjectivity
+elif DATASET == 'pol':
+    load_data = utils.load_polarity_data
+    load_embeddings = utils.load_embeddings_polarity
+elif DATASET == 'sst2':
+    load_data = utils.load_sst2_data
+    load_embeddings = utils.load_embeddings_sst2
 
 
 class TextConvNet:
@@ -44,7 +55,7 @@ class TextConvNet:
                                      dtype=tf.int32, trainable=False, shape=[])
 
     def import_data(self):
-        train, val = utils.load_subjectivity_data()
+        train, val = load_data()
 
         self.max_sentence_size = train[0].shape[1]
         self.n_train = train[0].shape[0]
@@ -69,7 +80,7 @@ class TextConvNet:
         with tf.name_scope('embed'):
 
             if _weights is None:
-                embedding_matrix = utils.load_embeddings_subjectivity()
+                embedding_matrix = load_embeddings()
                 _embed = tf.constant(embedding_matrix)
                 embed_matrix = tf.get_variable(
                     'embed_matrix', initializer=_embed)
@@ -83,41 +94,44 @@ class TextConvNet:
 
     def model(self):
 
-        conv0 = layers.conv1d_relu(inputs=self.embed,
-                                   filters=25,
-                                   k_size=3,
-                                   stride=1,
-                                   padding='SAME',
-                                   scope_name='conv0')
-        pool0 = layers.one_maxpool(inputs=conv0,
-                                   padding='VALID', scope_name='pool0')
+        conv0 = layers.conv1d(inputs=self.embed,
+                              filters=100,
+                              k_size=3,
+                              stride=1,
+                              padding='SAME',
+                              scope_name='conv0')
+        relu0 = layers.relu(inputs=conv0, scope_name='relu0')
+        pool0 = layers.one_maxpool(
+            inputs=relu0, padding='VALID', scope_name='pool0')
 
-        flatten0 = layers.flatten(pool0, scope_name='flatten0')
+        flatten0 = layers.flatten(inputs=pool0, scope_name='flatten0')
 
-        conv1 = layers.conv1d_relu(inputs=self.embed,
-                                   filters=25,
-                                   k_size=4,
-                                   stride=1,
-                                   padding='SAME',
-                                   scope_name='conv1')
-        pool1 = layers.one_maxpool(inputs=conv1,
-                                   padding='VALID', scope_name='pool1')
+        conv1 = layers.conv1d(inputs=self.embed,
+                              filters=100,
+                              k_size=4,
+                              stride=1,
+                              padding='SAME',
+                              scope_name='conv1')
+        relu1 = layers.relu(inputs=conv1, scope_name='relu0')
+        pool1 = layers.one_maxpool(
+            inputs=relu1, padding='VALID', scope_name='pool1')
 
-        flatten1 = layers.flatten(pool1, scope_name='flatten1')
+        flatten1 = layers.flatten(inputs=pool1, scope_name='flatten1')
 
-        conv2 = layers.conv1d_relu(inputs=self.embed,
-                                   filters=25,
-                                   k_size=5,
-                                   stride=1,
-                                   padding='SAME',
-                                   scope_name='conv2')
-        pool2 = layers.one_maxpool(inputs=conv2,
-                                   padding='VALID', scope_name='pool2')
+        conv2 = layers.conv1d(inputs=self.embed,
+                              filters=100,
+                              k_size=5,
+                              stride=1,
+                              padding='SAME',
+                              scope_name='conv2')
+        relu2 = layers.relu(inputs=conv2, scope_name='relu0')
+        pool2 = layers.one_maxpool(
+            inputs=relu2, padding='VALID', scope_name='pool2')
 
         flatten2 = layers.flatten(inputs=pool2, scope_name='flatten2')
 
         concat0 = layers.concatinate(
-            inputs=[flatten0, flatten1, flatten2], scope_name='concat0')
+            [flatten0, flatten1, flatten2], scope_name='concat0')
 
         dropout0 = layers.Dropout(
             inputs=concat0, rate=1 - self.keep_prob, scope_name='dropout0')
